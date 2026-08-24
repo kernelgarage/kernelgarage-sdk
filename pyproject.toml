@@ -1,5 +1,5 @@
 [project]
-name = "kernelgarage-sdk"
+name = "kernelgarage"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
@@ -10,7 +10,7 @@ requires-python = ">=3.14"
 dependencies = []
 
 [project.scripts]
-kernelgarage-sdk = "kernelgarage_sdk:main"
+kernelgarage = "kernelgarage_sdk:main"
 
 [build-system]
 requires = ["uv_build>=0.9.16,<0.10.0"]

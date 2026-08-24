@@ -11,18 +11,28 @@ uv run ruff format --check .
 
 ## Releasing
 
-```bash
-./scripts/release.sh [major|minor|patch|...]  # defaults to patch
-```
+`main` is protected (no direct pushes; PRs must pass CI to merge), so releases
+go through two chained Actions instead of a local script:
 
-This bumps the version in `pyproject.toml`/`uv.lock`, runs lint and tests,
-commits and pushes the bump to `main`, then creates a GitHub release for the
-new version tag. Publishing the release triggers `.github/workflows/pypi-publish.yml`,
-which builds and uploads the package to PyPI.
+1. **[Prepare Release](.github/workflows/prepare-release.yml)** — run manually
+   from the Actions tab (`workflow_dispatch`) with a `bump` input
+   (`patch`/`minor`/`major`). It lints and tests, bumps the version with
+   `uv version --bump`, and pushes the result to a `release/vX.Y.Z` branch,
+   opening a PR against `main`.
+2. Review and merge that PR like any other. Once merged, **[Tag
+   Release](.github/workflows/tag-release.yml)** runs on the resulting push to
+   `main`: it reads the version with `uv version --short` and, if no GitHub
+   release exists for it yet, creates one with `gh release create --generate-notes`.
+   That publish event triggers `.github/workflows/pypi-publish.yml`, which
+   builds and uploads the package to PyPI.
 
-The commit must be pushed to `origin/main` *before* the release is created:
-`gh release create` tags the remote's current default-branch tip, not your
-local commit, so creating the release first would tag the wrong commit.
+### One-time setup
 
-Requires a clean working tree on `main`, up to date with `origin/main`, and
-the [`gh` CLI](https://cli.github.com/) authenticated.
+- Branch protection on `main`: require a pull request before merging, and
+  require the CI workflow's checks to pass.
+- A `RELEASE_TOKEN` repository secret — a PAT (or GitHub App token) with
+  `contents: write` and `pull-requests: write` on this repo. The default
+  `GITHUB_TOKEN` can't be used for the checkout/push/PR-create steps in
+  *Prepare Release*: events it triggers don't fire other workflows, so CI
+  would never run on the release PR and the required check would never
+  appear.

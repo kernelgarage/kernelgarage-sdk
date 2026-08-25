@@ -3,6 +3,7 @@ name = "kernelgarage"
 version = "0.1.2"
 description = "Add your description here"
 readme = "README.md"
+license = "MIT"
 authors = [
     { name = "kernelgarage", email = "thekernelgarage@gmail.com" }
 ]

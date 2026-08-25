@@ -1,39 +1,27 @@
 # kernelgarage
 
-## Development
+Install:
 
 ```bash
-uv sync
-uv run pytest              # runs with coverage (see pyproject.toml)
-uv run ruff check .
-uv run ruff format --check .
-uv run ty check .
+pip install kernelgarage
 ```
 
-## Releasing
+Use as a console script:
 
-`main` is protected (no direct pushes; PRs must pass CI to merge), so releases
-go through two chained Actions instead of a local script:
+```bash
+kernelgarage
+```
 
-1. **[Prepare Release](.github/workflows/prepare-release.yml)** — run manually
-   from the Actions tab (`workflow_dispatch`) with a `bump` input
-   (`patch`/`minor`/`major`). It lints and tests, bumps the version with
-   `uv version --bump`, and pushes the result to a `release/vX.Y.Z` branch,
-   opening a PR against `main`.
-2. Review and merge that PR like any other. Once merged, **[Tag
-   Release](.github/workflows/tag-release.yml)** runs on the resulting push to
-   `main`: it reads the version with `uv version --short` and, if no GitHub
-   release exists for it yet, creates one with `gh release create --generate-notes`.
-   That publish event triggers `.github/workflows/pypi-publish.yml`, which
-   builds and uploads the package to PyPI.
+Or from Python:
 
-### One-time setup
+```python
+import kernelgarage
 
-- Branch protection on `main`: require a pull request before merging, and
-  require the CI workflow's checks to pass.
-- A `RELEASE_TOKEN` repository secret — a PAT (or GitHub App token) with
-  `contents: write` and `pull-requests: write` on this repo. The default
-  `GITHUB_TOKEN` can't be used for the checkout/push/PR-create steps in
-  *Prepare Release*: events it triggers don't fire other workflows, so CI
-  would never run on the release PR and the required check would never
-  appear.
+kernelgarage.main()
+```
+
+Full usage and the API reference: <https://kernelgarage.github.io/kernelgarage-sdk/>
+
+Contributing to the SDK itself? See [docs/development.md](docs/development.md),
+[docs/contributing.md](docs/contributing.md), and
+[docs/publishing.md](docs/publishing.md).

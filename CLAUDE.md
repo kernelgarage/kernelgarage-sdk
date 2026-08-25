@@ -19,16 +19,24 @@ uv run pytest tests/test_version.py::test_falls_back_when_package_not_installed 
 uv run ruff check .           # lint
 uv run ruff format --check .  # format check (use `uv run ruff format .` to fix)
 uv run ty check .             # type check
+uv run mkdocs serve           # live-preview docs (docs/, config in mkdocs.yml)
 ```
 
 CI (`.github/workflows/ci.yml`) runs these three checks (lint+format, typecheck,
 test) as separate jobs on every PR to `main`. All must pass before merge.
+`.github/workflows/docs.yml` builds `docs/` with MkDocs and deploys to GitHub
+Pages on every push to `main`.
+
+The README is intentionally minimal and user-facing (install + quick usage).
+Everything else — development setup, contribution process, releasing — lives
+under `docs/` and is also published as the MkDocs site (`docs/development.md`,
+`docs/contributing.md`, `docs/publishing.md`).
 
 ## Conventions
 
 - Branch naming: `<type>/<short-kebab-case-description>` (`feature/`, `fix/`,
   `docs/`, `chore/`, `refactor/`). `release/vX.Y.Z` is reserved for automated
-  release branches — don't use it for regular work. See `CONTRIBUTING.md`.
+  release branches — don't use it for regular work. See `docs/contributing.md`.
 - Commit/PR messages: imperative mood ("Add x", not "Added x").
 - `main` is protected: no direct pushes; all changes land via PR and must pass
   CI.

@@ -4,9 +4,10 @@
 
 ```bash
 uv sync
-uv run pytest
+uv run pytest              # runs with coverage (see pyproject.toml)
 uv run ruff check .
 uv run ruff format --check .
+uv run ty check .
 ```
 
 ## Releasing

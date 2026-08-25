@@ -35,10 +35,11 @@ jobs:
       - name: Install dependencies
         run: uv sync
 
-      - name: Lint and test
+      - name: Lint, type check, and test
         run: |
           uv run ruff check .
           uv run ruff format --check .
+          uv run ty check .
           uv run pytest
 
       - name: Bump version

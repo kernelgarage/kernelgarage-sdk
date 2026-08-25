@@ -1,0 +1,22 @@
+site_name: kernelgarage
+repo_url: https://github.com/kernelgarage/kernelgarage-sdk
+docs_dir: docs
+
+theme:
+  name: material
+
+nav:
+  - Home: index.md
+  - API reference: api.md
+  - Development: development.md
+  - Contributing: contributing.md
+  - Publishing: publishing.md
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          options:
+            show_source: false
+            show_root_heading: true

@@ -13,3 +13,6 @@ wheels/
 .pytest_cache
 .coverage
 htmlcov/
+
+# Docs build output
+site/

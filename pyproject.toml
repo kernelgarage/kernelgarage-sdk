@@ -24,6 +24,11 @@ dev = [
     "ruff>=0.16.4",
     "ty>=0.0.74",
 ]
+docs = [
+    "mkdocs>=1.6.1",
+    "mkdocs-material>=9.7.7",
+    "mkdocstrings[python]>=1.0.6",
+]
 
 [tool.pytest.ini_options]
 addopts = "--cov=kernelgarage --cov-report=term-missing"

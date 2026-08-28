@@ -18,7 +18,13 @@ from mcp.server.mcpserver import MCPServer
 
 __all__ = ["UsageReport", "build_usage_report", "mcp"]
 
-PROMETHEUS_URL = os.environ.get("PROMETHEUS_URL", "http://raspberrypi.local:9090")
+
+def _prometheus_url() -> str:
+    try:
+        return os.environ["PROMETHEUS_URL"]
+    except KeyError as exc:
+        raise RuntimeError("PROMETHEUS_URL is not set — see .env.example") from exc
+
 
 # A stalled mDNS lookup for an unreachable .local host can hang far longer than
 # any bare numeric httpx timeout suggests — an explicit Timeout object bounds it
@@ -44,7 +50,7 @@ def _decode_throttled(value: int) -> tuple[str, ...]:
 
 
 def _query(client: httpx.Client, promql: str) -> float | None:
-    response = client.get(f"{PROMETHEUS_URL}/api/v1/query", params={"query": promql})
+    response = client.get(f"{_prometheus_url()}/api/v1/query", params={"query": promql})
     response.raise_for_status()
     result = response.json()["data"]["result"]
     if not result:

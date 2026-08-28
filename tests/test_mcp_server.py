@@ -1,5 +1,7 @@
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from kernelgarage import mcp_server
 
 
@@ -11,6 +13,12 @@ def _fake_query_factory(values):
         raise AssertionError(f"unexpected promql: {promql}")
 
     return _fake_query
+
+
+def test_prometheus_url_raises_when_unset(monkeypatch):
+    monkeypatch.delenv("PROMETHEUS_URL", raising=False)
+    with pytest.raises(RuntimeError, match="PROMETHEUS_URL"):
+        mcp_server._prometheus_url()
 
 
 def test_decode_throttled_healthy():

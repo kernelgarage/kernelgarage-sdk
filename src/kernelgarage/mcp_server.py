@@ -10,14 +10,18 @@ a tool without a network port to manage.
 
 from __future__ import annotations
 
+import logging
 import os
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+from pathlib import Path
 
 import httpx
 from mcp.server.mcpserver import MCPServer
+from rich.console import Console
+from rich.table import Table
 
-__all__ = ["UsageReport", "build_usage_report", "mcp"]
+__all__ = ["UsageReport", "build_usage_report", "mcp", "print_report"]
 
 
 def _prometheus_url() -> str:
@@ -378,3 +382,65 @@ def get_usage_report_html(hours: int = 24) -> str:
 def main() -> None:
     """Entry point for the `kernelgarage-mcp` console script — runs over stdio."""
     mcp.run()
+
+
+def print_report(
+    hours: int = 24, *, html: bool = False, out: Path | None = None
+) -> None:
+    """CLI helper: print the report as a terminal table, or save HTML and print a link.
+
+    Never dumps raw HTML into the terminal — a saved file plus a clickable
+    `file://` link is the useful output, not a wall of markup. Also quiets
+    httpx's per-request INFO logging, which otherwise clutters this output
+    with one line per Prometheus query.
+    """
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    report = build_usage_report(hours=hours)
+    console = Console()
+
+    if html:
+        out_path = (out if out is not None else Path("report.html")).resolve()
+        out_path.write_text(report.render_html())
+        console.print(
+            f"[bold #f2a154]kernelgarage[/] report saved → "
+            f"[link={out_path.as_uri()}]{out_path}[/link]"
+        )
+        return
+
+    healthy = not report.throttle_events
+    status = (
+        "[green]healthy[/]"
+        if healthy
+        else f"[#e2703f]{', '.join(report.throttle_events)}[/]"
+    )
+    temperature = (
+        "no data"
+        if report.avg_temp_c is None
+        else f"{report.avg_temp_c:.1f}°C / {report.max_temp_c:.1f}°C (avg / peak)"
+    )
+    duration = (
+        f"{report.avg_duration_s:.2f}s" if report.avg_duration_s is not None else "—"
+    )
+    wait = (
+        f"{report.avg_queue_wait_s:.2f}s"
+        if report.avg_queue_wait_s is not None
+        else "—"
+    )
+
+    table = Table(
+        title=f"kernelgarage — last {report.hours}h", title_style="bold #f2a154"
+    )
+    table.add_column("Metric", style="dim")
+    table.add_column("Value", justify="right")
+    table.add_row("Temperature", temperature)
+    table.add_row("Throttling", status)
+    table.add_row("Requests", str(report.total_requests))
+    table.add_row(
+        "Prompt / completion tokens",
+        f"{report.prompt_tokens} / {report.completion_tokens}",
+    )
+    table.add_row("Peak queue depth", str(report.peak_queue_depth))
+    table.add_row("Avg duration", duration)
+    table.add_row("Avg queue wait", wait)
+
+    console.print(table)

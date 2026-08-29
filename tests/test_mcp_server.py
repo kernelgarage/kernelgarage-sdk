@@ -220,3 +220,76 @@ def test_main_runs_over_stdio(monkeypatch):
     mcp_server.main()
 
     assert calls == [True]
+
+
+def test_print_report_html_writes_file_and_prints_link(monkeypatch, tmp_path, capsys):
+    fake_report = MagicMock()
+    fake_report.render_html.return_value = "<html>hi</html>"
+    monkeypatch.setattr(mcp_server, "build_usage_report", lambda hours=24: fake_report)
+    out_path = tmp_path / "custom.html"
+
+    mcp_server.print_report(hours=5, html=True, out=out_path)
+
+    assert out_path.read_text() == "<html>hi</html>"
+    output = capsys.readouterr().out.replace("\n", "")
+    assert "report saved" in output
+    assert str(out_path) in output
+
+
+def test_print_report_html_default_out_path(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    fake_report = MagicMock()
+    fake_report.render_html.return_value = "<html>hi</html>"
+    monkeypatch.setattr(mcp_server, "build_usage_report", lambda hours=24: fake_report)
+
+    mcp_server.print_report(html=True)
+
+    assert (tmp_path / "report.html").read_text() == "<html>hi</html>"
+
+
+def test_print_report_table_with_data_and_warning(monkeypatch, capsys):
+    report = mcp_server.UsageReport(
+        hours=24,
+        avg_temp_c=45.0,
+        max_temp_c=60.0,
+        throttle_events=("under-voltage detected",),
+        total_requests=10,
+        prompt_tokens=100,
+        completion_tokens=200,
+        peak_queue_depth=2,
+        avg_duration_s=1.5,
+        avg_queue_wait_s=0.3,
+    )
+    monkeypatch.setattr(mcp_server, "build_usage_report", lambda hours=24: report)
+
+    mcp_server.print_report(hours=24)
+
+    output = capsys.readouterr().out
+    assert "kernelgarage" in output
+    assert "under-voltage detected" in output
+    assert "45.0" in output and "60.0" in output
+    assert "10" in output
+    assert "1.50s" in output
+    assert "0.30s" in output
+
+
+def test_print_report_table_no_data_is_healthy(monkeypatch, capsys):
+    report = mcp_server.UsageReport(
+        hours=1,
+        avg_temp_c=None,
+        max_temp_c=None,
+        throttle_events=(),
+        total_requests=0,
+        prompt_tokens=0,
+        completion_tokens=0,
+        peak_queue_depth=0,
+        avg_duration_s=None,
+        avg_queue_wait_s=None,
+    )
+    monkeypatch.setattr(mcp_server, "build_usage_report", lambda hours=24: report)
+
+    mcp_server.print_report(hours=1)
+
+    output = capsys.readouterr().out
+    assert "no data" in output
+    assert "healthy" in output

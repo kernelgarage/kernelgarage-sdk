@@ -19,6 +19,10 @@ def test_lazy_submodule_access():
     )
 
 
+def test_dir_includes_lazy_submodule():
+    assert "mcp_server" in dir(kernelgarage)
+
+
 def test_unknown_attribute_raises():
     with pytest.raises(AttributeError):
         _ = kernelgarage.not_a_real_submodule

@@ -43,3 +43,9 @@ Actions" — a one-time setup step.
 - `ty` type checking has an extensive set of rules escalated to `error` in
   `pyproject.toml` — pay attention to `ty check` output, since many checks
   that are warnings by default are hard errors here.
+- Code that queries an external service (Prometheus, HTTP APIs): catch that
+  library's error hierarchy at the query boundary and degrade gracefully
+  rather than letting one failed call crash the whole tool; normalize
+  sentinel values (e.g. `NaN`) to `None` at that same boundary; guard
+  independent optional fields independently before formatting; and escape
+  any interpolated value before embedding it in Rich console markup.

@@ -1,5 +1,6 @@
 from unittest.mock import MagicMock, patch
 
+import httpx
 import pytest
 
 from kernelgarage import mcp_server
@@ -45,6 +46,28 @@ def test_query_returns_value():
         "data": {"result": [{"value": [0, "42.5"]}]}
     }
     assert mcp_server._query(client, "up") == 42.5
+
+
+def test_query_returns_none_on_nan():
+    client = MagicMock()
+    client.get.return_value.json.return_value = {
+        "data": {"result": [{"value": [0, "NaN"]}]}
+    }
+    assert mcp_server._query(client, "up") is None
+
+
+def test_query_returns_none_on_http_error():
+    client = MagicMock()
+    client.get.side_effect = httpx.ConnectError("connection refused")
+    assert mcp_server._query(client, "up") is None
+
+
+def test_query_returns_none_on_bad_status():
+    client = MagicMock()
+    client.get.return_value.raise_for_status.side_effect = httpx.HTTPStatusError(
+        "bad request", request=MagicMock(), response=MagicMock()
+    )
+    assert mcp_server._query(client, "up") is None
 
 
 def test_build_usage_report_full_data():
@@ -103,6 +126,11 @@ def test_build_usage_report_no_data():
     assert report.avg_queue_wait_s is None
 
 
+def test_build_usage_report_rejects_non_positive_hours():
+    with pytest.raises(ValueError, match="hours must be positive"):
+        mcp_server.build_usage_report(hours=0)
+
+
 def test_render_with_data():
     report = mcp_server.UsageReport(
         hours=24,
@@ -125,6 +153,25 @@ def test_render_with_data():
     assert "10" in text
     assert "1.50s" in text
     assert "0.30s" in text
+
+
+def test_render_no_hardware_when_only_max_temp_missing():
+    report = mcp_server.UsageReport(
+        hours=1,
+        avg_temp_c=45.0,
+        max_temp_c=None,
+        throttle_events=(),
+        total_requests=0,
+        prompt_tokens=0,
+        completion_tokens=0,
+        peak_queue_depth=0,
+        avg_duration_s=None,
+        avg_queue_wait_s=None,
+    )
+
+    text = report.render()
+
+    assert "Hardware: no data" in text
 
 
 def test_render_no_hardware_or_llm_data():
@@ -234,6 +281,18 @@ def test_print_report_html_writes_file_and_prints_link(monkeypatch, tmp_path, ca
     output = capsys.readouterr().out.replace("\n", "")
     assert "report saved" in output
     assert str(out_path) in output
+
+
+def test_print_report_html_escapes_markup_in_path(monkeypatch, tmp_path, capsys):
+    fake_report = MagicMock()
+    fake_report.render_html.return_value = "<html>hi</html>"
+    monkeypatch.setattr(mcp_server, "build_usage_report", lambda hours=24: fake_report)
+    out_path = tmp_path / "weird[report].html"
+
+    mcp_server.print_report(hours=5, html=True, out=out_path)
+
+    output = capsys.readouterr().out
+    assert "[report]" in output
 
 
 def test_print_report_html_default_out_path(monkeypatch, tmp_path):

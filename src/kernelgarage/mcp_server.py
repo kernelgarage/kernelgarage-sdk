@@ -11,6 +11,7 @@ a tool without a network port to manage.
 from __future__ import annotations
 
 import logging
+import math
 import os
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
@@ -19,9 +20,20 @@ from pathlib import Path
 import httpx
 from mcp.server.mcpserver import MCPServer
 from rich.console import Console
+from rich.markup import escape
 from rich.table import Table
 
-__all__ = ["UsageReport", "build_usage_report", "mcp", "print_report"]
+__all__ = [
+    "UsageReport",
+    "build_usage_report",
+    "get_usage_report",
+    "get_usage_report_html",
+    "main",
+    "mcp",
+    "print_report",
+]
+
+_logger = logging.getLogger(__name__)
 
 
 def _prometheus_url() -> str:
@@ -55,12 +67,19 @@ def _decode_throttled(value: int) -> tuple[str, ...]:
 
 
 def _query(client: httpx.Client, promql: str) -> float | None:
-    response = client.get(f"{_prometheus_url()}/api/v1/query", params={"query": promql})
-    response.raise_for_status()
+    try:
+        response = client.get(
+            f"{_prometheus_url()}/api/v1/query", params={"query": promql}
+        )
+        response.raise_for_status()
+    except httpx.HTTPError:
+        _logger.warning("Prometheus query failed: %s", promql, exc_info=True)
+        return None
     result = response.json()["data"]["result"]
     if not result:
         return None
-    return float(result[0]["value"][1])
+    value = float(result[0]["value"][1])
+    return None if math.isnan(value) else value
 
 
 @dataclass(frozen=True)
@@ -81,7 +100,7 @@ class UsageReport:
     def render(self) -> str:
         lines = [f"Usage report — last {self.hours}h"]
 
-        if self.avg_temp_c is None:
+        if self.avg_temp_c is None or self.max_temp_c is None:
             lines.append("Hardware: no data (Prometheus unreachable or no scrapes yet)")
         else:
             lines.append(
@@ -116,7 +135,7 @@ class UsageReport:
             f'&mdash; <span class="muted">{health_phrase}</span>.'
         )
 
-        if self.avg_temp_c is None:
+        if self.avg_temp_c is None or self.max_temp_c is None:
             hardware_cards = """
       <div class="card span-2">
         <div class="label">Temperature</div>
@@ -302,53 +321,76 @@ class UsageReport:
 """
 
 
+# Each query is wrapped in an outer aggregation (avg/max/sum) so it returns
+# exactly one series even if Prometheus ever scrapes more than one target
+# (a second Pi, a relabeled job) — _query() only ever reads result[0].
+_QUERY_TEMPLATES = {
+    "avg_temp_c": "avg(avg_over_time(rpi_cpu_temperature_celsius[{window}]))",
+    "max_temp_c": "max(max_over_time(rpi_cpu_temperature_celsius[{window}]))",
+    "throttled_raw": "max(rpi_throttled_state)",
+    "total_requests": "sum(increase(llm_requests_total[{window}]))",
+    "prompt_tokens": "sum(increase(llm_tokens_prompt_total[{window}]))",
+    "completion_tokens": "sum(increase(llm_tokens_completion_total[{window}]))",
+    "peak_queue_depth": "max(max_over_time(llm_requests_waiting[{window}]))",
+    "duration_sum": "sum(increase(llm_request_duration_seconds_sum[{window}]))",
+    "duration_count": "sum(increase(llm_request_duration_seconds_count[{window}]))",
+    "wait_sum": "sum(increase(llm_queue_wait_seconds_sum[{window}]))",
+    "wait_count": "sum(increase(llm_queue_wait_seconds_count[{window}]))",
+}
+
+# Reused across calls instead of rebuilt per report: cheap for a one-shot CLI
+# invocation, but this module also backs a long-lived stdio MCP server where
+# per-call setup/teardown of a client and 11 threads adds up.
+_client: httpx.Client | None = None
+_pool: ThreadPoolExecutor | None = None
+
+
+def _get_client() -> httpx.Client:
+    global _client
+    if _client is None:
+        _client = httpx.Client(timeout=_TIMEOUT)
+    return _client
+
+
+def _get_pool() -> ThreadPoolExecutor:
+    global _pool
+    if _pool is None:
+        _pool = ThreadPoolExecutor(max_workers=len(_QUERY_TEMPLATES))
+    return _pool
+
+
+def _safe_avg(total: float | None, count: float | None) -> float | None:
+    return total / count if total is not None and count else None
+
+
 def build_usage_report(hours: int = 24) -> UsageReport:
     """Query Prometheus for the trailing `hours` and summarize hardware + LLM usage."""
+    if hours <= 0:
+        raise ValueError("hours must be positive")
+
     window = f"{hours}h"
     queries = {
-        "avg_temp_c": f"avg_over_time(rpi_cpu_temperature_celsius[{window}])",
-        "max_temp_c": f"max_over_time(rpi_cpu_temperature_celsius[{window}])",
-        "throttled_raw": "rpi_throttled_state",
-        "total_requests": f"sum(increase(llm_requests_total[{window}]))",
-        "prompt_tokens": f"sum(increase(llm_tokens_prompt_total[{window}]))",
-        "completion_tokens": f"sum(increase(llm_tokens_completion_total[{window}]))",
-        "peak_queue_depth": f"max_over_time(llm_requests_waiting[{window}])",
-        "duration_sum": f"sum(increase(llm_request_duration_seconds_sum[{window}]))",
-        "duration_count": (
-            f"sum(increase(llm_request_duration_seconds_count[{window}]))"
-        ),
-        "wait_sum": f"sum(increase(llm_queue_wait_seconds_sum[{window}]))",
-        "wait_count": f"sum(increase(llm_queue_wait_seconds_count[{window}]))",
+        key: template.format(window=window)
+        for key, template in _QUERY_TEMPLATES.items()
     }
 
-    with (
-        httpx.Client(timeout=_TIMEOUT) as client,
-        ThreadPoolExecutor(max_workers=len(queries)) as pool,
-    ):
-        results = dict(
-            zip(
-                queries,
-                pool.map(lambda promql: _query(client, promql), queries.values()),
-                strict=True,
-            )
+    client = _get_client()
+    pool = _get_pool()
+    results = dict(
+        zip(
+            queries,
+            pool.map(lambda promql: _query(client, promql), queries.values()),
+            strict=True,
         )
+    )
 
     throttled_raw = results["throttled_raw"]
     throttle_events = (
         _decode_throttled(int(throttled_raw)) if throttled_raw is not None else ()
     )
 
-    duration_sum, duration_count = results["duration_sum"], results["duration_count"]
-    avg_duration_s = (
-        duration_sum / duration_count
-        if duration_sum is not None and duration_count
-        else None
-    )
-
-    wait_sum, wait_count = results["wait_sum"], results["wait_count"]
-    avg_queue_wait_s = (
-        wait_sum / wait_count if wait_sum is not None and wait_count else None
-    )
+    avg_duration_s = _safe_avg(results["duration_sum"], results["duration_count"])
+    avg_queue_wait_s = _safe_avg(results["wait_sum"], results["wait_count"])
 
     return UsageReport(
         hours=hours,
@@ -403,7 +445,7 @@ def print_report(
         out_path.write_text(report.render_html())
         console.print(
             f"[bold #f2a154]kernelgarage[/] report saved → "
-            f"[link={out_path.as_uri()}]{out_path}[/link]"
+            f"[link={out_path.as_uri()}]{escape(str(out_path))}[/link]"
         )
         return
 
@@ -415,7 +457,7 @@ def print_report(
     )
     temperature = (
         "no data"
-        if report.avg_temp_c is None
+        if report.avg_temp_c is None or report.max_temp_c is None
         else f"{report.avg_temp_c:.1f}°C / {report.max_temp_c:.1f}°C (avg / peak)"
     )
     duration = (

@@ -149,12 +149,68 @@ def test_render_no_hardware_or_llm_data():
     assert "Avg queue wait" not in text
 
 
+def test_render_html_with_data_and_throttle_warning():
+    report = mcp_server.UsageReport(
+        hours=24,
+        avg_temp_c=45.0,
+        max_temp_c=60.0,
+        throttle_events=("under-voltage detected",),
+        total_requests=10,
+        prompt_tokens=100,
+        completion_tokens=200,
+        peak_queue_depth=2,
+        avg_duration_s=1.5,
+        avg_queue_wait_s=0.3,
+    )
+
+    html = report.render_html()
+
+    assert html.startswith("<!doctype html>")
+    assert 'class="mark"' in html
+    assert "10 requests over the last 24h" in html
+    assert "45.0" in html and "60.0" in html
+    assert "under-voltage detected" in html
+    assert 'badge warn"' in html
+    assert "1.50" in html
+    assert "0.30" in html
+
+
+def test_render_html_no_data_is_healthy_and_singular_request():
+    report = mcp_server.UsageReport(
+        hours=1,
+        avg_temp_c=None,
+        max_temp_c=None,
+        throttle_events=(),
+        total_requests=1,
+        prompt_tokens=0,
+        completion_tokens=0,
+        peak_queue_depth=0,
+        avg_duration_s=None,
+        avg_queue_wait_s=None,
+    )
+
+    html = report.render_html()
+
+    assert "1 request over the last 1h" in html
+    assert "no data" in html
+    assert 'badge healthy"' in html
+    assert "all healthy" in html
+
+
 def test_get_usage_report_tool(monkeypatch):
     fake_report = MagicMock()
     fake_report.render.return_value = "rendered report"
     monkeypatch.setattr(mcp_server, "build_usage_report", lambda hours=24: fake_report)
 
     assert mcp_server.get_usage_report(hours=5) == "rendered report"
+
+
+def test_get_usage_report_html_tool(monkeypatch):
+    fake_report = MagicMock()
+    fake_report.render_html.return_value = "<html>rendered</html>"
+    monkeypatch.setattr(mcp_server, "build_usage_report", lambda hours=24: fake_report)
+
+    assert mcp_server.get_usage_report_html(hours=5) == "<html>rendered</html>"
 
 
 def test_main_runs_over_stdio(monkeypatch):

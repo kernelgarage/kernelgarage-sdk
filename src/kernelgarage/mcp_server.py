@@ -3,8 +3,9 @@
 Answers "how was usage last day" by querying the same Prometheus instance
 `grafana-hardware-monitoring` and `agent-monitor` already write to — hardware
 metrics (`rpi_*`) and LLM/queue metrics (`llm_*`) — and folding both into one
-plain-text report. Runs over stdio, so any MCP-capable client (Claude Desktop,
-an agent framework) can call it as a tool without a network port to manage.
+report, either as plain text or a self-contained HTML page. Runs over stdio,
+so any MCP-capable client (Claude Desktop, an agent framework) can call it as
+a tool without a network port to manage.
 """
 
 from __future__ import annotations
@@ -97,6 +98,205 @@ class UsageReport:
 
         return "\n".join(lines)
 
+    def render_html(self) -> str:
+        """Render as a self-contained instrument-panel page — system fonts only,
+        no network requests, so it still renders on a Pi with no internet."""
+        healthy = not self.throttle_events
+        badge_class = "healthy" if healthy else "warn"
+        badge_text = "healthy" if healthy else ", ".join(self.throttle_events)
+
+        plural = "" if self.total_requests == 1 else "s"
+        health_phrase = "all healthy" if healthy else badge_text
+        summary = (
+            f"{self.total_requests} request{plural} over the last {self.hours}h "
+            f'&mdash; <span class="muted">{health_phrase}</span>.'
+        )
+
+        if self.avg_temp_c is None:
+            hardware_cards = """
+      <div class="card span-2">
+        <div class="label">Temperature</div>
+        <div class="value muted">no data</div>
+        <div class="hint">Prometheus unreachable, or no rpi_exporter scrapes yet</div>
+      </div>"""
+        else:
+            hardware_cards = f"""
+      <div class="card">
+        <div class="label">Avg temp</div>
+        <div class="value mono">{self.avg_temp_c:.1f}<span class="unit">°C</span></div>
+      </div>
+      <div class="card">
+        <div class="label">Peak temp</div>
+        <div class="value mono">{self.max_temp_c:.1f}<span class="unit">°C</span></div>
+      </div>"""
+
+        duration_value = (
+            f'{self.avg_duration_s:.2f}<span class="unit">s</span>'
+            if self.avg_duration_s is not None
+            else "—"
+        )
+        wait_value = (
+            f'{self.avg_queue_wait_s:.2f}<span class="unit">s</span>'
+            if self.avg_queue_wait_s is not None
+            else "—"
+        )
+
+        return f"""<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>kernelgarage usage report</title>
+<style>
+  :root {{
+    --bg: #15130f;
+    --surface: #211c16;
+    --ink: #f3ede2;
+    --muted: #8f8574;
+    --accent: #f2a154;
+    --good: #7ecb7e;
+    --warn: #e2703f;
+  }}
+  * {{ box-sizing: border-box; }}
+  body {{
+    background: var(--bg);
+    color: var(--ink);
+    margin: 0;
+    padding: 3rem 2.5rem;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  }}
+  .mono {{
+    font-family: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas,
+      "Liberation Mono", monospace;
+    font-variant-numeric: tabular-nums;
+  }}
+  .brand {{
+    display: flex;
+    align-items: center;
+    gap: .5rem;
+    margin: 0 0 .6rem;
+  }}
+  .mark {{ width: 20px; height: 20px; color: var(--accent); flex-shrink: 0; }}
+  .kicker {{
+    color: var(--accent);
+    font-size: .78rem;
+    font-weight: 600;
+    letter-spacing: .16em;
+    text-transform: uppercase;
+  }}
+  h1 {{
+    font-size: 1.35rem;
+    font-weight: 600;
+    line-height: 1.45;
+    margin: 0 0 2.25rem;
+    max-width: 34rem;
+    text-wrap: balance;
+  }}
+  h1 .muted {{ color: var(--muted); font-weight: 400; }}
+  .zone {{ margin-bottom: 1.75rem; max-width: 780px; }}
+  .zone-label {{
+    color: var(--muted);
+    font-size: .7rem;
+    font-weight: 600;
+    letter-spacing: .14em;
+    text-transform: uppercase;
+    margin-bottom: .75rem;
+  }}
+  .grid {{
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: .85rem;
+  }}
+  .card {{
+    background: var(--surface);
+    border-radius: 12px;
+    padding: 1.1rem 1.25rem;
+  }}
+  .card.span-2 {{ grid-column: span 2; }}
+  .label {{
+    color: var(--muted);
+    font-size: .68rem;
+    letter-spacing: .05em;
+    text-transform: uppercase;
+    margin-bottom: .5rem;
+  }}
+  .value {{ font-size: 1.7rem; font-weight: 600; line-height: 1; }}
+  .value.muted {{ color: var(--muted); font-size: 1.15rem; }}
+  .unit {{ font-size: .95rem; color: var(--muted); margin-left: .2rem; }}
+  .hint {{ color: var(--muted); font-size: .78rem; margin-top: .55rem; }}
+  .badge {{
+    display: inline-block;
+    padding: .3rem .7rem;
+    border-radius: 999px;
+    font-size: .82rem;
+    font-weight: 600;
+  }}
+  .badge.healthy {{ background: rgba(126, 203, 126, .16); color: var(--good); }}
+  .badge.warn {{ background: rgba(226, 112, 63, .16); color: var(--warn); }}
+</style>
+</head>
+<body>
+  <div class="brand">
+    <svg class="mark" viewBox="0 0 320 320" aria-hidden="true"
+      xmlns="http://www.w3.org/2000/svg">
+      <rect x="110" y="60" width="24" height="200" rx="12" fill="currentColor"/>
+      <circle cx="122" cy="60" r="14" fill="currentColor"/>
+      <circle cx="122" cy="260" r="14" fill="currentColor"/>
+      <path d="M122,150 L170,150 L225,95" fill="none" stroke="currentColor"
+        stroke-width="22" stroke-linecap="round" stroke-linejoin="round"/>
+      <path d="M122,170 L170,170 L225,225" fill="none" stroke="currentColor"
+        stroke-width="22" stroke-linecap="round" stroke-linejoin="round"/>
+      <circle cx="170" cy="150" r="12" fill="currentColor"/>
+      <circle cx="170" cy="170" r="12" fill="currentColor"/>
+      <circle cx="225" cy="95" r="14" fill="currentColor"/>
+      <circle cx="225" cy="225" r="14" fill="currentColor"/>
+    </svg>
+    <p class="kicker mono">kernelgarage</p>
+  </div>
+  <h1>{summary}</h1>
+
+  <div class="zone">
+    <div class="zone-label">Hardware</div>
+    <div class="grid">{hardware_cards}
+      <div class="card">
+        <div class="label">Throttling</div>
+        <span class="badge {badge_class}">{badge_text}</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="zone">
+    <div class="zone-label">Model</div>
+    <div class="grid">
+      <div class="card">
+        <div class="label">Requests</div>
+        <div class="value mono">{self.total_requests}</div>
+      </div>
+      <div class="card">
+        <div class="label">Prompt tokens</div>
+        <div class="value mono">{self.prompt_tokens}</div>
+      </div>
+      <div class="card">
+        <div class="label">Completion tokens</div>
+        <div class="value mono">{self.completion_tokens}</div>
+      </div>
+      <div class="card">
+        <div class="label">Peak queue depth</div>
+        <div class="value mono">{self.peak_queue_depth}</div>
+      </div>
+      <div class="card">
+        <div class="label">Avg duration</div>
+        <div class="value mono">{duration_value}</div>
+      </div>
+      <div class="card">
+        <div class="label">Avg queue wait</div>
+        <div class="value mono">{wait_value}</div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>
+"""
+
 
 def build_usage_report(hours: int = 24) -> UsageReport:
     """Query Prometheus for the trailing `hours` and summarize hardware + LLM usage."""
@@ -167,6 +367,12 @@ mcp = MCPServer("kernelgarage")
 def get_usage_report(hours: int = 24) -> str:
     """Report hardware and LLM usage for the trailing `hours` (default 24)."""
     return build_usage_report(hours=hours).render()
+
+
+@mcp.tool()
+def get_usage_report_html(hours: int = 24) -> str:
+    """Same as `get_usage_report`, rendered as a self-contained HTML page."""
+    return build_usage_report(hours=hours).render_html()
 
 
 def main() -> None:

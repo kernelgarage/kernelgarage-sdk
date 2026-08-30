@@ -16,3 +16,5 @@ htmlcov/
 
 # Docs build output
 site/
+
+.env

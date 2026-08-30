@@ -46,6 +46,29 @@ under `docs/` and is also published as the MkDocs site (`docs/development.md`,
   `pyproject.toml` — pay attention to `ty check` output, since many checks
   that are warnings by default are hard errors here.
 
+### External I/O (Prometheus queries, HTTP calls)
+
+Lessons from bugs found in `mcp_server.py`'s Prometheus-backed usage report —
+apply the same care to any future code that queries an external service:
+
+- Never let one failed request crash a whole report/tool call. Catch the
+  client library's error hierarchy (e.g. `httpx.HTTPError`) at the query
+  boundary and degrade to `None`/a "no data" state instead of propagating.
+- Normalize sentinel values (Prometheus's `NaN`) to `None` at that same query
+  boundary, not downstream — `NaN` is truthy in Python, so `int(nan or 0)`
+  raises instead of falling back.
+- When two related optional fields are computed independently (e.g. an avg
+  and a max from separate queries), guard them independently before
+  formatting. Don't assume one being present implies the other is.
+- Aggregate PromQL queries at the query level (`avg(...)`, `max(...)`,
+  `sum(...)`) so a query is guaranteed to return a single series — don't rely
+  on always indexing `result[0]` of a possibly multi-series response.
+- Escape any interpolated value (file paths, user input) before embedding it
+  in Rich console markup (`rich.markup.escape`) — Rich parses `[...]` as
+  markup tags.
+- In a long-lived process (the stdio MCP server), reuse the HTTP client and
+  thread pool across calls instead of rebuilding them per call.
+
 ## Releasing
 
 Releases go through two chained GitHub Actions rather than a local script,

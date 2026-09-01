@@ -18,3 +18,4 @@ htmlcov/
 site/
 
 .env
+.DS_Store

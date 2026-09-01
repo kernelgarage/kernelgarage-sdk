@@ -10,11 +10,13 @@ a tool without a network port to manage.
 
 from __future__ import annotations
 
+import json
 import logging
 import math
 import os
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 
 import httpx
@@ -26,6 +28,7 @@ from rich.table import Table
 __all__ = [
     "UsageReport",
     "build_usage_report",
+    "evidence_log_path",
     "get_usage_report",
     "get_usage_report_html",
     "main",
@@ -41,6 +44,46 @@ def _prometheus_url() -> str:
         return os.environ["PROMETHEUS_URL"]
     except KeyError as exc:
         raise RuntimeError("PROMETHEUS_URL is not set — see .env.example") from exc
+
+
+def evidence_log_path() -> Path:
+    """Where per-call evidence (PromQL queries + raw results) gets appended.
+
+    Unlike `PROMETHEUS_URL`, this has a sensible default rather than raising:
+    the log is a side effect for reproducibility, not something a missing
+    value should block a report on.
+    """
+    override = os.environ.get("KERNELGARAGE_EVIDENCE_LOG")
+    if override:
+        return Path(override)
+    return Path.home() / ".kernelgarage" / "evidence.jsonl"
+
+
+def _record_evidence(
+    hours: int, queries: dict[str, str], results: dict[str, float | None]
+) -> None:
+    """Append one JSON line capturing exactly what was queried and returned.
+
+    So a finding surfaced from a report (e.g. an unusual queue wait) can be
+    checked later against the real PromQL and raw values behind it, not just
+    the summarized numbers in the rendered report. A failure to write here
+    must never break the report itself — evidence is a side effect, not a
+    dependency of the tool call.
+    """
+    record = {
+        "timestamp": datetime.now(UTC).isoformat(),
+        "hours": hours,
+        "queries": {
+            key: {"promql": queries[key], "value": results.get(key)} for key in queries
+        },
+    }
+    try:
+        path = evidence_log_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a") as f:
+            f.write(json.dumps(record) + "\n")
+    except OSError:
+        _logger.warning("Failed to write evidence log entry", exc_info=True)
 
 
 # A stalled mDNS lookup for an unreachable .local host can hang far longer than
@@ -383,6 +426,8 @@ def build_usage_report(hours: int = 24) -> UsageReport:
             strict=True,
         )
     )
+
+    _record_evidence(hours, queries, results)
 
     throttled_raw = results["throttled_raw"]
     throttle_events = (

@@ -1,3 +1,5 @@
+import json
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import httpx
@@ -129,6 +131,64 @@ def test_build_usage_report_no_data():
 def test_build_usage_report_rejects_non_positive_hours():
     with pytest.raises(ValueError, match="hours must be positive"):
         mcp_server.build_usage_report(hours=0)
+
+
+def test_evidence_log_path_defaults_under_home(monkeypatch):
+    monkeypatch.delenv("KERNELGARAGE_EVIDENCE_LOG", raising=False)
+    expected = Path.home() / ".kernelgarage" / "evidence.jsonl"
+    assert mcp_server.evidence_log_path() == expected
+
+
+def test_evidence_log_path_honors_override(monkeypatch, tmp_path):
+    override = tmp_path / "custom" / "evidence.jsonl"
+    monkeypatch.setenv("KERNELGARAGE_EVIDENCE_LOG", str(override))
+    assert mcp_server.evidence_log_path() == override
+
+
+def test_build_usage_report_appends_evidence_entry(monkeypatch, tmp_path):
+    log_path = tmp_path / "evidence.jsonl"
+    monkeypatch.setenv("KERNELGARAGE_EVIDENCE_LOG", str(log_path))
+
+    with (
+        patch("kernelgarage.mcp_server._query", return_value=42.0),
+        patch("httpx.Client"),
+    ):
+        mcp_server.build_usage_report(hours=7)
+
+    lines = log_path.read_text().splitlines()
+    assert len(lines) == 1
+    entry = json.loads(lines[0])
+    assert entry["hours"] == 7
+    assert entry["queries"]["total_requests"]["value"] == 42.0
+    assert "llm_requests_total" in entry["queries"]["total_requests"]["promql"]
+    assert "timestamp" in entry
+
+
+def test_build_usage_report_appends_multiple_calls(monkeypatch, tmp_path):
+    log_path = tmp_path / "evidence.jsonl"
+    monkeypatch.setenv("KERNELGARAGE_EVIDENCE_LOG", str(log_path))
+
+    with (
+        patch("kernelgarage.mcp_server._query", return_value=None),
+        patch("httpx.Client"),
+    ):
+        mcp_server.build_usage_report(hours=1)
+        mcp_server.build_usage_report(hours=24)
+
+    lines = log_path.read_text().splitlines()
+    assert len(lines) == 2
+    assert json.loads(lines[0])["hours"] == 1
+    assert json.loads(lines[1])["hours"] == 24
+
+
+def test_record_evidence_swallows_write_failure(monkeypatch):
+    def _raise_mkdir(self, *args, **kwargs):
+        raise OSError("permission denied")
+
+    monkeypatch.setattr(Path, "mkdir", _raise_mkdir)
+
+    # Must not raise even though the log directory can't be created.
+    mcp_server._record_evidence(24, {"a": "up"}, {"a": 1.0})
 
 
 def test_render_with_data():
